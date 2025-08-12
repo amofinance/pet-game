@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>我的電子寵物 - 最小範例</title>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; background:#0f172a; font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; }
+    #game { width: 100%; height: 100%; display: grid; place-items: center; }
+    .hint { position: fixed; left: 12px; bottom: 12px; color: #cbd5e1; font-size: 12px; opacity: .9; }
+    .hint kbd { background: #1e293b; padding: 2px 6px; border-radius: 6px; border:1px solid #334155; }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+  <div class="hint">操作：按 <kbd>F</kbd> 餵食，<kbd>P</kbd> 玩耍。或點擊畫面上的按鈕。</div>
+  <script>
+    // --- 遊戲設定 ---
+    const WIDTH = 800, HEIGHT = 520;
+
+    const state = {
+      hunger: 80,     // 飢餓（0-100，越高越飽）
+      happiness: 70,  // 快樂（0-100）
+      energy: 60,     // 體力（0-100）
+      age: 0,         // 天數
+      alive: true,
+    };
+
+    // 簡易持久化（localStorage）
+    const saved = localStorage.getItem('pet-state-v1');
+    if (saved) {
+      try { Object.assign(state, JSON.parse(saved)); } catch {}
+    }
+
+    const saveState = () => localStorage.setItem('pet-state-v1', JSON.stringify(state));
+
+    class MainScene extends Phaser.Scene {
+      constructor() { super('main'); }
+      preload() {}
+      create() {
+        const centerX = WIDTH/2, centerY = HEIGHT/2;
+
+        // 背景漸層
+        this.cameras.main.setBackgroundColor('#0f172a');
+        const gBg = this.add.graphics();
+        gBg.fillStyle(0x1f2937, 1).fillRoundedRect(32, 24, WIDTH-64, HEIGHT-96, 24);
+
+        // 寵物（簡單的臉）
+        this.pet = this.add.container(centerX, centerY-20);
+        const g = this.add.graphics();
+        g.fillStyle(0xfcd34d, 1).fillCircle(0, 0, 90);             // 臉
+        g.fillStyle(0x1f2937, 1)
+          .fillCircle(-30, -20, 10)                                 // 左眼
+          .fillCircle( 30, -20, 10);                                // 右眼
+        // 微笑
+        g.lineStyle(6, 0x1f2937, 1); g.beginPath();
+        g.arc(0, 10, 40, Phaser.Math.DegToRad(20), Phaser.Math.DegToRad(160));
+        g.strokePath();
+        this.pet.add(g);
+
+        // 生命條 UI
+        this.ui = this.add.container(60, HEIGHT-60);
+        const labelStyle = { fontFamily: 'system-ui', fontSize: '16px', color: '#e2e8f0' };
+        const barWidth = WIDTH-120, barHeight = 12;
+        const mkBar = (y, color) => {
+          const bg = this.add.rectangle(0, y, barWidth, barHeight, 0x0b1220).setOrigin(0, 0.5).setStrokeStyle(1, 0x334155);
+          const fg = this.add.rectangle(0, y, barWidth, barHeight, color).setOrigin(0, 0.5);
+          return { bg, fg };
+        };
+        this.add.text(60, HEIGHT-96, '狀態', { fontSize: '18px', color:'#93c5fd' }).setOrigin(0,0.5);
+        this.add.text(60, HEIGHT-130, '我的電子寵物', { fontSize: '22px', color:'#f1f5f9' }).setOrigin(0,0.5);
+
+        this.hungerText = this.add.text(60, HEIGHT-50, '飢餓', labelStyle).setOrigin(0,0.5);
+        this.hungerBar = mkBar(HEIGHT-50, 0x34d399);
+        this.happyText = this.add.text(60, HEIGHT-25, '快樂', labelStyle).setOrigin(0,0.5);
+        this.happyBar = mkBar(HEIGHT-25, 0x60a5fa);
+        this.energyText = this.add.text(60, HEIGHT-75, '體力', labelStyle).setOrigin(0,0.5);
+        this.energyBar = mkBar(HEIGHT-75, 0xfca5a5);
+
+        // 互動按鈕
+        this.feedBtn = this.mkButton(centerX-120, HEIGHT-120, '餵食', () => this.feed());
+        this.playBtn = this.mkButton(centerX+120, HEIGHT-120, '玩耍', () => this.playWith());
+
+        // 鍵盤快捷鍵
+        this.input.keyboard.on('keydown-F', () => this.feed());
+        this.input.keyboard.on('keydown-P', () => this.playWith());
+
+        // 每秒衰減
+        this.ticker = this.time.addEvent({ delay: 1000, loop: true, callback: () => this.tick() });
+
+        // 初始刷新
+        this.refreshUI();
+      }
+
+      mkButton(x, y, text, onClick) {
+        const btn = this.add.container(x, y);
+        const w = 120, h = 40;
+        const r = this.add.rectangle(0, 0, w, h, 0x334155).setStrokeStyle(2, 0x475569).setInteractive({ useHandCursor: true });
+        const t = this.add.text(0, 0, text, { color:'#e2e8f0', fontSize:'16px' }).setOrigin(0.5);
+        r.on('pointerdown', () => { this.sound?.play?.('click'); onClick(); });
+        r.on('pointerover', () => r.setFillStyle(0x3b4c6b));
+        r.on('pointerout',  () => r.setFillStyle(0x334155));
+        btn.add([r, t]);
+        return btn;
+      }
+
+      feed() {
+        if (!state.alive) return;
+        state.hunger = Math.min(100, state.hunger + 18);
+        state.energy = Math.min(100, state.energy + 6);
+        state.happiness = Math.min(100, state.happiness + 4);
+        this.petPulse(1.08);
+        this.refreshUI();
+        saveState();
+      }
+
+      playWith() {
+        if (!state.alive) return;
+        state.happiness = Math.min(100, state.happiness + 16);
+        state.energy = Math.max(0, state.energy - 8);
+        state.hunger = Math.max(0, state.hunger - 6);
+        this.petPulse(1.12);
+        this.refreshUI();
+        saveState();
+      }
+
+      petPulse(scaleTo=1.1) {
+        this.tweens.add({ targets: this.pet, scale: scaleTo, duration: 120, yoyo: true, ease: 'Sine.easeInOut' });
+      }
+
+      tick() {
+        if (!state.alive) return;
+
+        // 自然衰減
+        state.hunger = Math.max(0, state.hunger - 1.2);
+        state.happiness = Math.max(0, state.happiness - 0.7);
+        state.energy = Math.max(0, state.energy - 0.6);
+
+        // 年齡計算：每 60 秒 +1 天（方便體驗）
+        if ((this.ticker.getElapsed() / 1000) % 60 === 0) state.age += 1;
+
+        // 生存判定
+        if (state.hunger <= 0 || state.energy <= 0) {
+          state.alive = false;
+          this.showGameOver();
+        }
+
+        this.refreshUI();
+        saveState();
+      }
+
+      refreshUI() {
+        const pctW = (v) => Math.max(0.0001, (v/100) * (WIDTH-120));
+        this.hungerBar.fg.width = pctW(state.hunger);
+        this.happyBar.fg.width  = pctW(state.happiness);
+        this.energyBar.fg.width = pctW(state.energy);
+
+        const mood = state.happiness > 70 ? '超開心' : state.happiness > 40 ? '普通' : '不太開心';
+        const status = state.alive ? `年齡：${state.age} 天｜狀態：${mood}` : '狀態：😵 已死亡（點擊畫面任意處重生）';
+        if (!this.statusText) {
+          this.statusText = this.add.text(WIDTH/2, 36, status, { fontSize:'18px', color:'#e2e8f0' }).setOrigin(0.5,0);
+        } else {
+          this.statusText.setText(status);
+        }
+      }
+
+      showGameOver() {
+        const overlay = this.add.rectangle(WIDTH/2, HEIGHT/2, WIDTH, HEIGHT, 0x000000, 0.55);
+        const box = this.add.rectangle(WIDTH/2, HEIGHT/2, 420, 190, 0x111827).setStrokeStyle(2, 0x374151);
+        this.add.text(WIDTH/2, HEIGHT/2 - 40, '你的寵物倒下了…', { fontSize:'22px', color:'#fca5a5' }).setOrigin(0.5);
+        const tip = this.add.text(WIDTH/2, HEIGHT/2 + 10, '點擊任意處重生並繼承部分屬性', { fontSize:'14px', color:'#cbd5e1' }).setOrigin(0.5);
+        this.input.once('pointerdown', () => {
+          state.alive = true;
+          state.hunger = 50; state.energy = 50; state.happiness = Math.max(30, state.happiness);
+          this.refreshUI(); overlay.destroy(); box.destroy(); tip.destroy();
+        });
+      }
+    }
+
+    const config = {
+      type: Phaser.AUTO,
+      width: WIDTH,
+      height: HEIGHT,
+      parent: 'game',
+      backgroundColor: '#0f172a',
+      scene: [MainScene],
+    };
+
+    new Phaser.Game(config);
+  </script>
+</body>
+</html>
